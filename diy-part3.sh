@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# DIY2 - H68K + iStoreOS 24.10
+# DIY2 - x86
 #
 # 第三方插件 / 依赖 / 来源优先级处理
 #
