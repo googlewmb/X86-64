@@ -1,3 +1,4 @@
+
 #!/bin/bash
 #
 # DIY2 - x86
@@ -55,6 +56,18 @@ echo "========================================"
 # PassWall 已由 DIY1 拉取到 package/myapp，这里不重复拉取
 rm -rf feeds/packages/net/{xray-core,v2ray-geodata,sing-box,chinadns-ng,dns2socks,hysteria,ipt2socks,microsocks,naiveproxy,shadowsocks-rust,shadowsocksr-libev,simple-obfs,tcping,v2ray-plugin,xray-plugin,geoview,shadow-tls,dae,daed}
 rm -rf feeds/luci/applications/luci-app-passwall
+
+# 1.2.1 移除指定的官方 LuCI 插件源码目录
+echo
+echo "========================================"
+echo "移除官方 LuCI 插件入口源码"
+echo "========================================"
+
+rm -rf ./feeds/luci/applications/{luci-app-passwall,luci-app-passwall2,luci-app-openclash,luci-app-homeproxy}
+rm -rf ./feeds/luci/applications/{luci-app-lucky,luci-app-smartdns,luci-app-timecontrol,luci-app-mosdns}
+rm -rf ./feeds/luci/applications/{luci-app-nikki,luci-app-momo,luci-app-daed}
+
+echo "官方 LuCI 插件入口源码清理完成"
 
 # DIY1 已下载：
 # package/myapp/passwall-packages
