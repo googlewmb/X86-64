@@ -40,7 +40,7 @@ jobs:
       CONFIG_BUILD: configs/${{ matrix.config }}
       BUILD_CONFIG_ONLY: ${{ github.event.inputs.BUILD_CONFIG_ONLY || 'false' }}
 
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: 释放Ubuntu磁盘空间
