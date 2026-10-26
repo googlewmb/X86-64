@@ -519,6 +519,71 @@ chmod +x files/etc/uci-defaults/zz-enable-wifi
 echo "Wi-Fi 首次启动自动开启已设置"
 
 ###############################################################################
+# 12.5 网络配置：192.168.10.1 / eth0 WAN / 其他 eth* LAN
+###############################################################################
+
+echo
+echo "========================================"
+echo "设置默认网络配置"
+echo "========================================"
+
+mkdir -p files/etc/uci-defaults
+
+cat > files/etc/uci-defaults/zz-network-defaults <<'EOF'
+#!/bin/sh
+
+# eth0 固定为 WAN
+# 其他实际存在的 eth* 网卡加入 br-lan
+# LAN 地址：192.168.10.1/24
+
+[ -x /sbin/uci ] || exit 1
+
+# WAN：DHCP 客户端
+uci -q set network.wan='interface'
+uci -q set network.wan.device='eth0'
+uci -q set network.wan.proto='dhcp'
+
+# LAN：静态地址
+uci -q set network.lan='interface'
+uci -q set network.lan.device='br-lan'
+uci -q set network.lan.proto='static'
+uci -q set network.lan.ipaddr='192.168.10.1'
+uci -q set network.lan.netmask='255.255.255.0'
+
+# 创建或更新 LAN 桥接设备
+uci -q set network.br_lan='device'
+uci -q set network.br_lan.name='br-lan'
+uci -q set network.br_lan.type='bridge'
+
+# 清除旧端口配置
+uci -q delete network.br_lan.ports
+
+# 将除 eth0 外的所有 eth* 接口加入 LAN
+for path in /sys/class/net/eth*; do
+    [ -e "$path" ] || continue
+
+    iface="${path##*/}"
+
+    [ "$iface" = "eth0" ] && continue
+
+    echo "加入 LAN: $iface"
+    uci -q add_list network.br_lan.ports="$iface"
+done
+
+# 保存网络配置
+uci -q commit network
+
+exit 0
+EOF
+
+chmod +x files/etc/uci-defaults/zz-network-defaults
+
+echo "网络配置已写入首次启动脚本"
+echo "LAN IP: 192.168.10.1"
+echo "WAN: eth0"
+echo "LAN: 其他 eth* 接口"
+
+###############################################################################
 # 13. 最终来源检查
 ###############################################################################
 
