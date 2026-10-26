@@ -647,6 +647,37 @@ for pkg in $MYAPP_PACKAGES; do
 
 done
 
+
+###############################################################################
+# 15. Fullcone NAT (SONiC 风格，适配 firewall4)
+###############################################################################
+
+echo
+echo "========================================"
+echo "应用 SONiC Fullcone 补丁"
+echo "========================================"
+
+# 先清理可能存在的旧 fullcone 补丁
+rm -f package/network/config/firewall4/patches/*fullcone*.patch
+rm -f package/network/config/firewall/patches/*fullcone*.patch
+rm -f target/linux/generic/hack-*/98*-add-sonic-fullcone*.patch
+rm -f package/network/utils/iptables/patches/*sonic-fullcone*.patch
+rm -f feeds/luci/applications/luci-app-firewall/patches/*fullcone*.patch 2>/dev/null || true
+
+# 一键应用最新补丁（内核 + firewall4 + libnftnl + nftables + LuCI）
+if curl -sSL https://raw.githubusercontent.com/mufeng05/openwrt-sonic-fullcone/master/add_sonic_fullcone.sh | bash; then
+    echo "SONiC Fullcone 补丁应用成功"
+else
+    echo "WARNING: SONiC Fullcone 补丁应用失败，请检查网络或手动处理"
+fi
+
+# 可选：清理相关包，确保重新编译时使用新补丁
+# make package/network/config/firewall4/clean
+# make package/libs/libnftnl/clean
+# make package/network/utils/nftables/clean
+
+
+
 ###############################################################################
 # 16. DIY2 完成
 ###############################################################################
