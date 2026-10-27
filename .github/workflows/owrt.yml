@@ -1,0 +1,308 @@
+name: Openwrt_x86-owrt
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      BUILD_CONFIG_ONLY:
+        description: '仅输出完整配置，不编译固件'
+        required: true
+        default: false
+        type: boolean
+  schedule:
+    - cron: "16 16 * * *"
+
+env:
+  OPENWRT_NAME: Openwrt
+  REPO: googlewmb/X86-64
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: master
+  CONFIG_FILE: configs/x86.txt
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
+  UPLOAD_BIN: 'true'
+  UPLOAD_FIRMWARE: 'true'
+  UPLOAD_RELEASE: 'true'
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        config:
+          - x86.txt
+      fail-fast: false
+
+    env:
+      CONFIG_BUILD: configs/${{ matrix.config }}
+      BUILD_CONFIG_ONLY: ${{ github.event.inputs.BUILD_CONFIG_ONLY || 'false' }}
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 释放Ubuntu磁盘空间
+        uses: coder-xiaomo/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: 加载项目文件
+        uses: actions/checkout@v4
+
+      - name: 初始化编译环境
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext \
+            gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool \
+            lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev \
+            libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano ninja-build \
+            p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig \
+            texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+
+      - name: 设置当前的日期
+        run: |
+          sudo timedatectl set-timezone "$TZ"
+          echo "date1=$(date +'%Y.%m.%d-%H.%M')" >> "$GITHUB_ENV"
+          echo "date2=$(date +'%Y.%m.%d')" >> "$GITHUB_ENV"
+          echo "date3=$(date '+%Y年%m月%d日')" >> "$GITHUB_ENV"
+
+      - name: 下载固件源码
+        run: |
+          git clone --depth 1 "${{ env.REPO_URL }}" \
+            -b "${{ env.REPO_BRANCH }}" openwrt
+
+      - name: 执行DIY_P1_SH
+        run: |
+          set -e
+          SCRIPT="${GITHUB_WORKSPACE}/${{ env.DIY_P1_SH }}"
+          test -f "$SCRIPT" || { echo "错误：找不到 $SCRIPT"; exit 1; }
+          chmod +x "$SCRIPT"
+          cd openwrt
+          "$SCRIPT"
+
+      - name: 更新feeds
+        working-directory: ./openwrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 加载配置并执行DIY_P2_SH和defconfig
+        run: |
+          set -e
+          CONFIG_PATH="${GITHUB_WORKSPACE}/${CONFIG_BUILD}"
+          SCRIPT="${GITHUB_WORKSPACE}/${{ env.DIY_P2_SH }}"
+
+          test -s "$CONFIG_PATH" || {
+            echo "错误：配置文件不存在或为空：$CONFIG_PATH"
+            exit 1
+          }
+          test -f "$SCRIPT" || {
+            echo "错误：找不到 DIY 脚本：$SCRIPT"
+            exit 1
+          }
+
+          cp "$CONFIG_PATH" "${GITHUB_WORKSPACE}/openwrt/.config"
+          chmod +x "$SCRIPT"
+          cd openwrt
+          "$SCRIPT"
+          make defconfig
+
+          test -s .config || {
+            echo "错误：make defconfig 后 .config 为空"
+            exit 1
+          }
+
+      - name: 仅输出完整配置
+        if: env.BUILD_CONFIG_ONLY == 'true'
+        working-directory: ./openwrt
+        run: |
+          set -e
+          echo "仅输出完整配置模式"
+          echo "当前配置: ${{ matrix.config }}"
+          mkdir -p config-output
+          cp .config "config-output/${{ matrix.config }}_${{ env.date1 }}_full.config"
+          ls -lh config-output/
+
+      - name: 上传完整配置
+        if: env.BUILD_CONFIG_ONLY == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: config_${{ env.OPENWRT_NAME }}_${{ matrix.config }}_${{ env.date1 }}
+          path: openwrt/config-output/*.config
+          if-no-files-found: error
+
+      - name: 下载安装包
+        if: env.BUILD_CONFIG_ONLY != 'true'
+        working-directory: ./openwrt
+        run: |
+          make download -j"$(nproc)"
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
+
+      - name: 编译固件
+        id: compile
+        if: env.BUILD_CONFIG_ONLY != 'true'
+        working-directory: ./openwrt
+        run: |
+          echo "$(nproc) thread compile"
+          make -j"$(nproc)" || make -j1 || make -j1 V=s
+
+      - name: 获取固件设备名字
+        if: env.BUILD_CONFIG_ONLY != 'true'
+        working-directory: ./openwrt
+        run: |
+          grep '^CONFIG_TARGET_.*_DEVICE_.*=y' .config \
+            | sed -r 's/^CONFIG_TARGET_(.*)_DEVICE_(.*)=y/\1_\2/' \
+            | head -n1 > DEVICE_NAME
+          if [ -s DEVICE_NAME ]; then
+            echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> "$GITHUB_ENV"
+          else
+            echo "DEVICE_NAME=x86_64" >> "$GITHUB_ENV"
+          fi
+
+      - name: 上传bin目录文件
+        if: steps.compile.outcome == 'success' && env.UPLOAD_BIN == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin_${{ env.OPENWRT_NAME }}_${{ env.DEVICE_NAME }}_${{ env.date1 }}
+          path: openwrt/bin
+          if-no-files-found: error
+
+      - name: 整理文件到firmware目录
+        id: organize
+        if: steps.compile.outcome == 'success'
+        run: |
+          set -e
+          mkdir -p firmware
+          cp -v ./openwrt/.config \
+            "./firmware/${{ env.date1 }}_${{ env.OPENWRT_NAME }}_${{ env.DEVICE_NAME }}.config"
+
+          find openwrt/bin/targets -maxdepth 3 -type f \
+            \( -name "config.buildinfo" -o \
+               -name "*.bin" -o -name "*.img" -o -name "*.itb" -o \
+               -name "*.ubi" -o -name "*.trx" -o -name "*.tar" -o \
+               -name "*.gz" -o -name "*.xz" -o -name "*.vmdk" -o \
+               -name "*.qcow2" -o -name "*.vdi" \) \
+            -exec cp -v {} ./firmware/ \;
+
+          cd firmware
+          if [ -f config.buildinfo ]; then
+            mv config.buildinfo \
+              "${{ env.date1 }}_${{ env.OPENWRT_NAME }}_${{ env.DEVICE_NAME }}_config.buildinfo"
+          fi
+
+          for file in *.bin *.img *.itb *.ubi *.trx *.tar *.gz *.xz *.vmdk *.qcow2 *.vdi; do
+            [ -f "$file" ] || continue
+            case "$file" in
+              "${{ env.date1 }}_"*) continue ;;
+            esac
+            mv "$file" "${{ env.date1 }}_${{ env.OPENWRT_NAME }}_${{ env.DEVICE_NAME }}_$file"
+          done
+
+          echo "FIRMWARE=${GITHUB_WORKSPACE}/firmware" >> "$GITHUB_ENV"
+          ls -lh
+
+      - name: 上传firmware目录文件
+        if: steps.organize.outcome == 'success' && env.UPLOAD_FIRMWARE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware_${{ env.OPENWRT_NAME }}_${{ env.DEVICE_NAME }}_${{ env.date1 }}
+          path: ${{ env.FIRMWARE }}
+          if-no-files-found: error
+
+      - name: 生成release描述
+        id: release
+        if: steps.organize.outcome == 'success' && env.UPLOAD_RELEASE == 'true'
+        run: |
+          {
+            echo "由衷感谢所有为 OpenWrt 无私奉献的开发者。"
+            echo "当前配置: ${{ matrix.config }}"
+            echo
+            echo "## 固件下载"
+            echo "固件及配置文件见本次 Release 附件。"
+          } > release.txt
+
+      - name: 发布至Release
+        if: steps.release.outcome == 'success'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.FIRMWARE }}/*
+          name: ${{ env.date3 }}-${{ matrix.config }}
+          tag_name: ${{ env.date2 }}-${{ matrix.config }}
+          body_path: release.txt
+          fail_on_unmatched_files: true
+
+      - name: 配置Git提交身份
+        if: always()
+        run: |
+          git config --global user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+      - name: 回传完整配置到仓库
+        if: always() && (env.BUILD_CONFIG_ONLY == 'true' || steps.compile.outcome == 'success')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          SOURCE="${GITHUB_WORKSPACE}/openwrt/.config"
+          test -s "$SOURCE" || {
+            echo "没有可回传的完整 .config，跳过"
+            exit 0
+          }
+
+          git clone --depth 1 -b main \
+            "https://x-access-token:${GH_TOKEN}@github.com/${{ env.REPO }}.git" \
+            "${GITHUB_WORKSPACE}/main"
+
+          cd "${GITHUB_WORKSPACE}/main"
+          mkdir -p configs
+          cp "$SOURCE" "configs/${{ matrix.config }}.full.config"
+
+          git add "configs/${{ matrix.config }}.full.config"
+          if git diff --cached --quiet; then
+            echo "完整配置没有变化，无需提交"
+            exit 0
+          fi
+
+          git commit -m "update full config for ${{ matrix.config }}"
+
+          pushed=false
+          for i in 1 2 3 4 5; do
+            git fetch origin main
+            if git rebase origin/main; then
+              if git push origin HEAD:main; then
+                pushed=true
+                break
+              fi
+            else
+              git rebase --abort || true
+              echo "rebase 冲突，放弃本次自动回传以避免覆盖远端文件"
+              exit 1
+            fi
+            echo "推送失败，第 ${i} 次重试"
+            sleep 10
+          done
+
+          [ "$pushed" = true ] || {
+            echo "错误：完整配置推送失败"
+            exit 1
+          }
+
+      - name: 查看磁盘使用情况
+        if: always()
+        run: df -hT
