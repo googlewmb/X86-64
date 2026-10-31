@@ -7472,7 +7472,7 @@ CONFIG_WEECHAT_ZSTD=y
 # CONFIG_PACKAGE_nmap is not set
 # CONFIG_PACKAGE_nmap-full is not set
 # CONFIG_PACKAGE_nmap-ssl is not set
-CONFIG_PACKAGE_nping=y
+CONFIG_PACKAGE_nping=n
 # CONFIG_PACKAGE_nping-ssl is not set
 # end of NMAP Suite
 
